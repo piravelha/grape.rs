@@ -1,137 +1,216 @@
-use regex::Regex;
-use std::fmt::{Display, Formatter, Error};
+use std::{fmt::{Display, Error, Formatter}, process::exit};
+mod lexer;
 
 #[derive(Debug, Clone)]
-enum TokenKind {
-    IntLiteral,
-    Plus,
-    Minus,
-    Times,
-    Div,
+enum Value {
+    Int(i32),
 }
 
-#[derive(Debug, Clone)]
-struct Location {
-    file: String,
-    line: i32,
-    column: i32,
-}
-
-#[derive(Debug, Clone)]
-struct Token {
-    kind: TokenKind,
-    value: String,
-    location: Location,
-}
-
-#[derive(Debug, Clone)]
-enum LexingResult {
-    Ok(Vec<Token>),
-    Err {
-        location: Location,
-        message: String,
-    }
-}
-
-impl Display for LexingResult {
+impl Display for Value {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), Error> {
         match self {
-            LexingResult::Ok(tokens) => write!(formatter, "Ok({:?})", tokens)?,
-            LexingResult::Err { location, message } => write!(
-                formatter,
-                "{}:{}:{}: {}",
-                location.file,
-                location.line,
-                location.column,
-                message,
-            )?,
+            Value::Int(int) => {
+                write!(formatter, "{}", int)?;
+            }
         }
         Ok(())
     }
 }
 
-fn new_pattern(re: &str) -> Regex {
-    Regex::new(&format!("^({})", re)).unwrap()
+#[derive(Debug, Clone)]
+enum Type {
+    Int,
 }
 
-fn update_location(mut line: i32, mut column: i32, input: &str) -> (i32, i32) {
-    for char in input.chars() {
-        if char == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
+struct TypeErr {
+    location: lexer::Location,
+    message: String,
+}
+
+fn check_word(stack: &mut Vec<Type>, ip: &mut usize, token: lexer::Token) -> Result<(), TypeErr> {
+    match token.value.as_str() {
+        "print" => {
+            if stack.is_empty() {
+                Err(TypeErr {
+                    location: token.location,
+                    message: format!("TYPE ERROR: Attempting to print with an empty stack")
+                })
+            } else {
+                stack.pop();
+                *ip += 1;
+                Ok(())
+            }
+        },
+        _ => todo!(),
+    }
+}
+
+fn check_program(program: Vec<lexer::Token>) -> Result<(), TypeErr> {
+    let mut stack = vec![];
+    let mut ip = 0;
+
+    while ip < program.len() {
+        let token = program[ip].clone();
+        match token.kind {
+            lexer::TokenKind::IntLiteral => {
+                stack.push(Type::Int);
+                ip += 1;
+            },
+            lexer::TokenKind::Word => {
+                check_word(&mut stack, &mut ip, token)?;
+            },
+            lexer::TokenKind::Plus => {
+                if stack.len() < 2 {
+                    return Err(TypeErr {
+                        location: token.location,
+                        message: format!(
+                            "Not enough arguments for `+` (plus) operation, expected 2, got {}",
+                            stack.len()
+                        ),
+                    });
+                }
+                stack.pop();
+                ip += 1;
+            },
+            lexer::TokenKind::Minus => {
+                if stack.len() < 2 {
+                    return Err(TypeErr {
+                        location: token.location,
+                        message: format!(
+                            "Not enough arguments for `-` (minus) operation, expected 2, got {}",
+                            stack.len()
+                        ),
+                    });
+                }
+                stack.pop();
+                ip += 1;
+            },
+            lexer::TokenKind::Times => {
+                if stack.len() < 2 {
+                    return Err(TypeErr {
+                        location: token.location,
+                        message: format!(
+                            "Not enough arguments for `*` (times) operation, expected 2, got {}",
+                            stack.len()
+                        ),
+                    });
+                }
+                stack.pop();
+                ip += 1;
+            },
+            lexer::TokenKind::Div => {
+                if stack.len() < 2 {
+                    return Err(TypeErr {
+                        location: token.location,
+                        message: format!(
+                            "Not enough arguments for `/` (div) operation, expected 2, got {}",
+                            stack.len()
+                        ),
+                    });
+                }
+                stack.pop();
+                ip += 1;
+            }
         }
     }
-    (line, column)
+
+    Ok(())
 }
 
-fn lex(file_path: &str, mut input: String) -> LexingResult {
-    let patterns = vec![
-        (new_pattern(r"\d+"), TokenKind::IntLiteral),
-        (new_pattern(r"\+"), TokenKind::Plus),
-        (new_pattern(r"-"), TokenKind::Minus),
-        (new_pattern(r"\*"), TokenKind::Times),
-        (new_pattern(r"/"), TokenKind::Div),
-    ];
-    let mut tokens = vec![];
-    let (mut line, mut column) = (1, 1);
-    while !input.is_empty() {
-        (line, column) = update_location(
-            line,
-            column,
-            &input[..input.len() - input.trim_start().len()]
-        );
-        input = input.trim_start().to_string();
-        if input.is_empty() {
-            break;
-        }
-        let mut matched = false;
-        for (pattern, kind) in patterns.clone().into_iter() {
-            if let Some(captures) = pattern.captures(&input) {
-                let value = &captures[0];
-                tokens.push(Token {
-                    kind,
-                    value: value.to_string(),
-                    location: Location {
-                        file: file_path.to_string(),
-                        line,
-                        column
+fn interpret_word(stack: &mut Vec<Value>, ip: &mut usize, token: lexer::Token) {
+    match token.value.as_str() {
+        "print" => {
+            let top = stack.pop().unwrap();
+            println!("{}", top);
+            *ip += 1;
+        },
+        _ => todo!(),
+    }
+}
+
+fn interpret_program(program: Vec<lexer::Token>) {
+    let mut stack = vec![];
+    let mut ip = 0;
+
+    while ip < program.len() {
+        let token = program[ip].clone();
+        match token.kind {
+            lexer::TokenKind::IntLiteral => {
+                stack.push(Value::Int(str::parse(&token.value).unwrap()));
+                ip += 1;
+            },
+            lexer::TokenKind::Word => {
+                interpret_word(&mut stack, &mut ip, token);
+            },
+            lexer::TokenKind::Plus => {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                match (left, right) {
+                    (Value::Int(left), Value::Int(right)) => {
+                        stack.push(Value::Int(left + right));
                     },
-                });
-                (line, column) = update_location(
-                    line,
-                    column,
-                    &input[..value.len()],
-                );
-                input = input[value.len()..].to_string();
-                matched = true;
-            }
-        }
-        if !matched {
-            return LexingResult::Err {
-                location: Location {
-                    file: file_path.to_string(),
-                    line,
-                    column,
-                },
-                message: format!(
-                    "SYNTAX ERROR: Invalid character: `{}`",
-                    input.chars().next().unwrap(),
-                ),
+                }
+                ip += 1;
+            },
+            lexer::TokenKind::Minus => {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                match (left, right) {
+                    (Value::Int(left), Value::Int(right)) => {
+                        stack.push(Value::Int(left - right));
+                    },
+                }
+                ip += 1;
+            },
+            lexer::TokenKind::Times => {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                match (left, right) {
+                    (Value::Int(left), Value::Int(right)) => {
+                        stack.push(Value::Int(left * right));
+                    },
+                }
+                ip += 1;
+            },
+            lexer::TokenKind::Div => {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                match (left, right) {
+                    (Value::Int(left), Value::Int(right)) => {
+                        stack.push(Value::Int(left / right));
+                    },
+                }
+                ip += 1;
             }
         }
     }
-    LexingResult::Ok(tokens)
 }
 
 fn main() {
     let program = "
         1 2 +
-        error
+        print
+        3 4 +
+        print
+        print
     ".to_string();
 
-    let result = lex("<stdin>", program);
+    let result = lexer::lex("<stdin>", program);
 
-    println!("{}", result);
+    match result {
+        lexer::LexingResult::Err { location, message } => {
+            eprintln!("{}: {}", location, message);
+            exit(1);
+        },
+        lexer::LexingResult::Ok(tokens) => {
+            match check_program(tokens.clone()) {
+                Ok(()) => {},
+                Err(TypeErr { location, message }) => {
+                    eprintln!("{}: {}", location, message);
+                    exit(1);
+                }
+            };
+            interpret_program(tokens);
+        }
+    }
 }
